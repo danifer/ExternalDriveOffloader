@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>drive_loader</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/keeton/bin/drive_loader</string>
+	<string>1211D3B8-66DA-4685-B7B8-1F1D61EAC61D</string>
+    </array>
+    <key>KeepAlive</key>
+    <true/>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardErrorPath</key>
+    <string>/Users/keeton/Library/Logs/drive_loader.err</string>
+    <key>StandardOutPath</key>
+    <string>/Users/keeton/Library/Logs/drive_loader.log</string> 
+    <key>UserName</key>
+    <string>keeton</string>
+</dict>
+</plist>

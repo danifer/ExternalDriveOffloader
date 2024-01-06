@@ -1,0 +1,140 @@
+#!/bin/bash
+PATH=$PATH:/bin:/usr/bin
+
+find_drive() {
+    local usb_drive_uuid="$1"  # $1 is the first argument passed to the function
+
+    if [ -z "$usb_drive_uuid" ]; then
+        echo "Drive UUID is not defined."
+        exit 1
+    fi
+
+    working_path="/Users/keeton/Personal"
+    if [ ! -d "$working_path" ]; then
+        mkdir -p "$working_path" &&
+        echo "Directory created: $working_path"
+    fi
+
+    # Create Local Data Path
+    local_path="$working_path/Local"
+    if [ ! -d "$local_path" ]; then
+        mkdir -p "$local_path" &&
+        echo "Directory created: $local_path"
+    fi
+
+    # Test Dropbox
+    if [[ "$(ps aux | grep -i dropbox)" == *"/Applications/Dropbox.app/Contents/MacOS/Dropbox"* ]]; then
+        is_dropbox_running="true"
+    else
+        is_dropbox_running="false"
+    fi
+
+    drive_info=$(diskutil info $usb_drive_uuid)
+    mount_point=$(echo $drive_info | awk -F 'Mount Point: ' '{print $2}' | awk '{print $1}')
+    external_path="$working_path/External"
+    local_path="$working_path/Local"
+    symlink="$working_path/MyData"
+    lock_file_path="$working_path/rsync.lock"
+
+    # Check If The Drive Is Mounted
+    if [[ "$drive_info" == *"$usb_drive_uuid"* ]] && [[ ! -z $mount_point ]]; then
+        # Target Symlink to External
+        if [[ ! -L "$external_path" ]] || [[ "$(readlink -f "$symlink")" != "$(readlink -f "$external_path")" ]]; then
+            mount_point=$(echo $drive_info | awk -F 'Mount Point: ' '{print $2}' | awk '{print $1}')
+            rm -f $symlink $external_path
+            ln -s $mount_point $external_path
+            ln -s $external_path $symlink
+            echo "Creating symlink: $external_path -> $symlink"
+            echo "Writing to External USB drive $usb_drive_uuid at $symlink -> $(readlink -f $symlink)"
+        fi
+
+        # Count Local/Data Files
+        dir_count=$(find "$local_path" -maxdepth 1 -type d | wc -l) &&
+        file_count=$(find "$local_path" -maxdepth 1 -type f | wc -l) &&
+        total_count=$(( (dir_count - 1) + file_count ))
+
+        # Compare Lockfile Age And Files Found
+        max_lockfile_age=180
+        if [ $total_count -gt 0 ]; then
+            if find "$lock_file_path" -type f -mmin +$max_lockfile_age | grep -q '^'; then
+                echo "$lock_file_path is older than $max_lockfile_age minutes and $total_count files found. Removing lock file." &&
+                rm -f $lock_file_path
+            fi
+        fi
+
+        # Execute/Skip Rsync
+        if [ -f "$lock_file_path" ]; then
+            echo "$lock_file_path exists. No rsync."
+        else
+            echo "$lock_file_path does not exist. Starting rsync." &&
+            touch "$lock_file_path" &&
+            rsync -av --remove-source-files --stats $local_path/ $external_path/ &&
+            find "$local_path" -mindepth 1 -type d -empty -delete
+        fi
+
+        # Start Dropbox
+        if [[ $is_dropbox_running == "false" ]]; then
+            echo "Starting Dropbox." &&
+            open -a Dropbox
+        fi
+
+    else
+        # Stop Dropbox
+        if [[ $is_dropbox_running == "true" ]]; then
+            echo "Stopping Dropbox." &&
+            osascript -e 'tell application "Dropbox" to quit' &&
+            pkill Dropbox
+        fi
+
+        # Target Symlink to Local
+        if [[ "$(readlink -f "$symlink")" != "$(readlink -f "$local_path")" ]]; then
+            rm -f $symlink
+            ln -s $local_path $symlink
+            echo "Creating symlink: $local_path -> $symlink"
+            echo "Writing to Local drive at $symlink -> $(readlink -f $symlink)"
+        fi
+    fi
+}
+
+echo "Starting $(date) for $(whoami)"
+
+while true; do
+    find_drive $1
+    sleep 5
+done
+
+#Issues I ran into with this included setting up the .plist file for the /Library/LaunchDaemon, assigning a <UserName>
+#element; and adding rsync and bash to the Security & Privacy Full Disk Access list.
+
+#The .plist file at Library/LaunchDaemon/drive_loader.plist:
+#
+#<?xml version="1.0" encoding="UTF-8"?>
+#<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+#<plist version="1.0">
+#<dict>
+#    <key>Label</key>
+#    <string>drive_loader</string>
+#    <key>ProgramArguments</key>
+#    <array>
+#        <string>/Users/keeton/bin/drive_loader</string>
+#        <string>1211D3B8-66DA-4685-B7B8-1F1D61EAC61D</string>
+#    </array>
+#    <key>KeepAlive</key>
+#    <key>KeepAlive</key>
+#    <true/>
+#    <key>RunAtLoad</key>
+#    <true/>
+#    <key>StandardErrorPath</key>
+#    <string>/Users/keeton/Library/Logs/drive_loader.err</string>
+#    <key>StandardOutPath</key>
+#    <string>/Users/keeton/Library/Logs/drive_loader.log</string>
+#    <key>UserName</key>
+#    <string>keeton</string>
+#</dict>
+#</plist>
+
+#Commands for stopping and starting the custom drive_loader daemon:
+#  sudo launchctl unload -w /Library/LaunchDaemons/drive_loader.plist
+#  sudo launchctl load -w /Library/LaunchDaemons/drive_loader.plist
+
+#Rotating log files was handled by newsyslog, configured at /etc/newsyslog.d/

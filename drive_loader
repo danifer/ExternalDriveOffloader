@@ -15,13 +15,6 @@ find_drive() {
         echo "Directory created: $working_path"
     fi
 
-    # Create Local Data Path
-    local_path="$working_path/Local"
-    if [ ! -d "$local_path" ]; then
-        mkdir -p "$local_path" &&
-        echo "Directory created: $local_path"
-    fi
-
     # Test Dropbox
     if [[ "$(ps aux | grep -i dropbox)" == *"/Applications/Dropbox.app/Contents/MacOS/Dropbox"* ]]; then
         is_dropbox_running="true"
@@ -31,10 +24,18 @@ find_drive() {
 
     drive_info=$(diskutil info $usb_drive_uuid)
     mount_point=$(echo $drive_info | awk -F 'Mount Point: ' '{print $2}' | awk '{print $1}')
+
+    # Paths
     external_path="$working_path/External"
     local_path="$working_path/Local"
     symlink="$working_path/MyData"
     lock_file_path="$working_path/rsync.lock"
+
+    # Create Local Data Path
+    if [ ! -d "$local_path" ]; then
+        mkdir -p "$local_path" &&
+        echo "Directory created: $local_path"
+    fi
 
     # Check If The Drive Is Mounted
     if [[ "$drive_info" == *"$usb_drive_uuid"* ]] && [[ ! -z $mount_point ]]; then

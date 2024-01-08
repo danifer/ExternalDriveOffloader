@@ -9,10 +9,17 @@ find_drive() {
         exit 1
     fi
 
-    working_path="/Users/keeton/Personal"
+    working_path="/Users/keeton/MyData"
     if [ ! -d "$working_path" ]; then
         mkdir -p "$working_path" &&
         echo "Directory created: $working_path"
+    fi
+
+    # Create Local Data Path
+    local_path="$working_path/Local"
+    if [ ! -d "$local_path" ]; then
+        mkdir -p "$local_path" &&
+        echo "Directory created: $local_path"
     fi
 
     # Test Dropbox
@@ -22,77 +29,63 @@ find_drive() {
         is_dropbox_running="false"
     fi
 
+    # Paths
     drive_info=$(diskutil info $usb_drive_uuid)
     mount_point=$(echo $drive_info | awk -F 'Mount Point: ' '{print $2}' | awk '{print $1}')
-
-    # Paths
     external_path="$working_path/External"
     local_path="$working_path/Local"
-    symlink="$working_path/MyData"
     lock_file_path="$working_path/rsync.lock"
 
-    # Create Local Data Path
-    if [ ! -d "$local_path" ]; then
-        mkdir -p "$local_path" &&
-        echo "Directory created: $local_path"
-    fi
-
     # Check If The Drive Is Mounted
-    if [[ "$drive_info" == *"$usb_drive_uuid"* ]] && [[ ! -z $mount_point ]]; then
-        # Target Symlink to External
-        if [[ ! -L "$external_path" ]] || [[ "$(readlink -f "$symlink")" != "$(readlink -f "$external_path")" ]]; then
-            mount_point=$(echo $drive_info | awk -F 'Mount Point: ' '{print $2}' | awk '{print $1}')
-            rm -f $symlink $external_path
-            ln -s $mount_point $external_path
-            ln -s $external_path $symlink
-            echo "Creating symlink: $external_path -> $symlink"
-            echo "Writing to External USB drive $usb_drive_uuid at $symlink -> $(readlink -f $symlink)"
-        fi
+    if [[ "$drive_info" == *"$usb_drive_uuid"* ]]; then
+        if [[ -z $mount_point ]]; then
+            rm -f $lock_file_path
+        else
+            # Target Symlink to External
+            if [[ ! -L "$external_path" ]] || [[ "$(readlink -f "$external_path")" != "$(readlink -f "$mount_point")" ]]; then
+                mount_point=$(echo $drive_info | awk -F 'Mount Point: ' '{print $2}' | awk '{print $1}')
+                rm -f $external_path
+                ln -s $mount_point $external_path
+                echo "Creating symlink: $external_path -> $mount_point"
+                echo "Writing to External USB drive $usb_drive_uuid at $external_path -> $(readlink -f $mount_point)"
+            fi
 
-        # Count Local/Data Files
-        dir_count=$(find "$local_path" -maxdepth 1 -type d | wc -l) &&
-        file_count=$(find "$local_path" -maxdepth 1 -type f | wc -l) &&
-        total_count=$(( (dir_count - 1) + file_count ))
+            # Count Local/Data Files
+            dir_count=$(find "$local_path" -maxdepth 1 -type d | wc -l) &&
+            file_count=$(find "$local_path" -maxdepth 1 -type f | wc -l) &&
+            total_count=$(( (dir_count - 1) + file_count ))
 
-        # Compare Lockfile Age And Files Found
-        max_lockfile_age=180
-        if [ $total_count -gt 0 ]; then
-            if find "$lock_file_path" -type f -mmin +$max_lockfile_age | grep -q '^'; then
-                echo "$lock_file_path is older than $max_lockfile_age minutes and $total_count files found. Removing lock file." &&
-                rm -f $lock_file_path
+            # Compare Lockfile Age And Files Found
+            max_lockfile_age=180
+            if [ $total_count -gt 0 ]; then
+                if find "$lock_file_path" -type f -mmin +$max_lockfile_age | grep -q '^'; then
+                    echo "$lock_file_path is older than $max_lockfile_age minutes and $total_count files found. Removing lock file." &&
+                    rm -f $lock_file_path
+                fi
+            fi
+
+            # Execute/Skip Rsync
+            if [ -f "$lock_file_path" ]; then
+                echo "$lock_file_path exists. No rsync."
+            else
+                echo "$lock_file_path does not exist. Starting rsync." &&
+                touch "$lock_file_path" &&
+                rsync -av --remove-source-files --stats $local_path/ $external_path/ &&
+                find "$local_path" -mindepth 1 -type d -empty -delete
+            fi
+
+            # Start Dropbox
+            if [[ $is_dropbox_running == "false" ]]; then
+                echo "Starting Dropbox." &&
+                open -a Dropbox
             fi
         fi
-
-        # Execute/Skip Rsync
-        if [ -f "$lock_file_path" ]; then
-            echo "$lock_file_path exists. No rsync."
-        else
-            echo "$lock_file_path does not exist. Starting rsync." &&
-            touch "$lock_file_path" &&
-            rsync -av --remove-source-files --stats $local_path/ $external_path/ &&
-            find "$local_path" -mindepth 1 -type d -empty -delete
-        fi
-
-        # Start Dropbox
-        if [[ $is_dropbox_running == "false" ]]; then
-            echo "Starting Dropbox." &&
-            open -a Dropbox
-        fi
-
     else
         # Stop Dropbox
         if [[ $is_dropbox_running == "true" ]]; then
             echo "Stopping Dropbox." &&
             osascript -e 'tell application "Dropbox" to quit' &&
             pkill Dropbox
-        fi
-
-        # Target Symlink to Local
-        if [[ "$(readlink -f "$symlink")" != "$(readlink -f "$local_path")" ]]; then
-            rm -f $symlink
-            ln -s $local_path $symlink
-            echo "Creating symlink: $local_path -> $symlink"
-            echo "Writing to Local drive at $symlink -> $(readlink -f $symlink)"
         fi
     fi
 }
